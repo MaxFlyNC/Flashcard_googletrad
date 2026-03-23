@@ -8,7 +8,7 @@ export class FlashDB extends Dexie {
   progress!: Table<UserProgress>
 
   constructor() {
-    super('FlashLingoDB')
+    super('FlashCardTradDB')
     this.version(1).stores({
       flashcards: '++id, nextReview, sourceLang, targetLang, createdAt, repetitions',
       sessions: '++id, date',
