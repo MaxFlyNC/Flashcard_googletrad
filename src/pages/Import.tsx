@@ -1,13 +1,14 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Upload, FileJson, Plus, Trash2, CheckCircle2, AlertCircle, BookOpen, Info } from 'lucide-react'
+import { Upload, FileJson, Plus, Trash2, CheckCircle2, BookOpen, Info, ScanLine, Loader2, Languages } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { parseGoogleTakeout, parsePlainText, langName, LANGUAGE_NAMES } from '../lib/googleTranslateParser'
 import { importCards, db } from '../lib/db'
 import { Flashcard } from '../lib/types'
 import { getInitialCardState } from '../lib/srs'
+import { translateText } from '../lib/translate'
 
-type Tab = 'takeout' | 'text' | 'manual'
+type Tab = 'takeout' | 'text' | 'manual' | 'scan'
 
 export default function Import() {
   const [tab, setTab] = useState<Tab>('takeout')
@@ -108,6 +109,7 @@ export default function Import() {
     { id: 'takeout', label: 'Google Takeout', icon: <FileJson size={16} /> },
     { id: 'text', label: 'Texte / CSV', icon: <BookOpen size={16} /> },
     { id: 'manual', label: 'Manuel', icon: <Plus size={16} /> },
+    { id: 'scan', label: 'Scanner', icon: <ScanLine size={16} /> },
   ]
 
   const langOptions = Object.entries(LANGUAGE_NAMES).filter(([k]) => k !== 'auto')
@@ -232,6 +234,13 @@ export default function Import() {
             </motion.div>
           )}
 
+          {/* ── Scanner (Scanmarker Air) ─────────────────────────────── */}
+          {tab === 'scan' && (
+            <motion.div key="scan" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}>
+              <ScanTab />
+            </motion.div>
+          )}
+
           {/* ── Manual ──────────────────────────────────────────────────── */}
           {tab === 'manual' && (
             <motion.div key="manual" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="space-y-4">
@@ -311,6 +320,145 @@ export default function Import() {
     </div>
   )
 }
+
+// ─── Scanner Tab ────────────────────────────────────────────────────────────
+
+function ScanTab() {
+  const [srcLang, setSrcLang] = useState('en')
+  const [tgtLang, setTgtLang] = useState('fr')
+  const [scanInput, setScanInput] = useState('')
+  const [translating, setTranslating] = useState(false)
+  const [scannedCards, setScannedCards] = useState<{ front: string; back: string }[]>([])
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const langOptions = Object.entries(LANGUAGE_NAMES).filter(([k]) => k !== 'auto')
+
+  // Auto-focus on mount so Scanmarker sends directly here
+  useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  const handleScan = async (text: string) => {
+    const word = text.trim()
+    if (!word) return
+
+    setScanInput('')
+    setTranslating(true)
+
+    try {
+      const { translatedText, detectedSourceLang } = await translateText(word, srcLang, tgtLang)
+
+      const card: Flashcard = {
+        front: word,
+        back: translatedText,
+        sourceLang: detectedSourceLang || srcLang,
+        targetLang: tgtLang,
+        createdAt: new Date(),
+        importedFrom: 'manual',
+        ...getInitialCardState(),
+      }
+
+      await db.flashcards.add(card)
+      setScannedCards(prev => [{ front: word, back: translatedText }, ...prev.slice(0, 9)])
+      toast.success(`"${word}" → "${translatedText}"`)
+    } catch {
+      toast.error('Traduction impossible. Vérifiez votre connexion.')
+    }
+
+    setTranslating(false)
+    // Re-focus for next scan
+    setTimeout(() => inputRef.current?.focus(), 100)
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      handleScan(scanInput)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Info banner */}
+      <div className="bg-violet-900/30 border border-violet-500/30 rounded-xl p-4 flex gap-3">
+        <ScanLine size={18} className="text-violet-400 flex-shrink-0 mt-0.5" />
+        <div className="text-sm text-violet-200 space-y-1">
+          <p className="font-medium">Mode Scanmarker Air</p>
+          <p className="text-violet-300 text-xs">
+            Scannez un mot avec votre stylo — il est envoyé automatiquement ici.
+            La traduction et la flashcard sont créées instantanément.
+          </p>
+        </div>
+      </div>
+
+      {/* Language selectors */}
+      <div className="grid grid-cols-2 gap-3">
+        {([['Langue source', srcLang, setSrcLang], ['Langue cible', tgtLang, setTgtLang]] as const).map(([label, val, setter]) => (
+          <div key={String(label)}>
+            <label className="text-xs text-slate-400 mb-1 block">{String(label)}</label>
+            <select
+              value={String(val)}
+              onChange={e => (setter as (v: string) => void)(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm"
+            >
+              {langOptions.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
+        ))}
+      </div>
+
+      {/* Scan input */}
+      <div className="relative">
+        <div className="absolute inset-0 rounded-xl bg-violet-500/10 animate-pulse pointer-events-none" />
+        <div className="relative flex items-center gap-3 bg-slate-800/60 border-2 border-violet-500/50 rounded-xl px-4 py-3 focus-within:border-violet-400 transition-colors">
+          {translating ? (
+            <Loader2 size={18} className="text-violet-400 animate-spin flex-shrink-0" />
+          ) : (
+            <Languages size={18} className="text-violet-400 flex-shrink-0" />
+          )}
+          <input
+            ref={inputRef}
+            value={scanInput}
+            onChange={e => setScanInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={translating ? 'Traduction…' : 'Prêt à scanner — ou tapez et appuyez sur Entrée'}
+            disabled={translating}
+            className="flex-1 bg-transparent text-white placeholder-slate-500 focus:outline-none text-sm"
+          />
+        </div>
+      </div>
+
+      <p className="text-center text-xs text-slate-500">
+        Appuyez sur <kbd className="bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded text-xs">Entrée</kbd> pour valider
+      </p>
+
+      {/* Scanned cards feed */}
+      {scannedCards.length > 0 && (
+        <div className="space-y-2 mt-2">
+          <p className="text-xs text-slate-400 font-medium">Cartes créées cette session</p>
+          <AnimatePresence initial={false}>
+            {scannedCards.map((c, i) => (
+              <motion.div
+                key={`${c.front}-${i}`}
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-center gap-3 bg-slate-800/40 border border-slate-700/40 rounded-xl px-4 py-3"
+              >
+                <CheckCircle2 size={16} className="text-emerald-400 flex-shrink-0" />
+                <div className="flex-1 min-w-0 flex gap-2 items-center">
+                  <span className="text-white text-sm truncate">{c.front}</span>
+                  <span className="text-slate-500 text-xs">→</span>
+                  <span className="text-indigo-300 text-sm truncate">{c.back}</span>
+                </div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Manage Cards ────────────────────────────────────────────────────────────
 
 function ManageCards() {
   const [cards, setCards] = useState<Flashcard[]>([])
