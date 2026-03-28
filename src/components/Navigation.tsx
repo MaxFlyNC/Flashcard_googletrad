@@ -1,11 +1,12 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Home, BookOpen, BarChart2, Upload, Trophy } from 'lucide-react'
+import { Home, BookOpen, BarChart2, Upload, Trophy, Bot } from 'lucide-react'
 
 const NAV_ITEMS = [
   { path: '/', icon: Home, label: 'Accueil' },
   { path: '/study', icon: BookOpen, label: 'Réviser' },
   { path: '/import', icon: Upload, label: 'Importer' },
+  { path: '/agent', icon: Bot, label: 'Agent IA' },
   { path: '/stats', icon: BarChart2, label: 'Stats' },
   { path: '/achievements', icon: Trophy, label: 'Trophées' },
 ]
@@ -16,7 +17,7 @@ export default function Navigation() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-      <div className="bg-slate-900/95 backdrop-blur-xl border-t border-slate-700/50 px-2 pt-2 pb-1">
+      <div className="bg-slate-900/95 backdrop-blur-xl border-t border-slate-700/50 px-1 pt-1.5 pb-1">
         <div className="flex items-center justify-around max-w-lg mx-auto">
           {NAV_ITEMS.map(item => {
             const active = location.pathname === item.path
@@ -25,7 +26,7 @@ export default function Navigation() {
                 key={item.path}
                 whileTap={{ scale: 0.9 }}
                 onClick={() => navigate(item.path)}
-                className="relative flex flex-col items-center gap-0.5 py-1.5 px-3 rounded-xl min-w-14"
+                className="relative flex flex-col items-center gap-0.5 py-1 px-2 rounded-xl min-w-0 flex-1"
               >
                 {active && (
                   <motion.div
@@ -35,10 +36,10 @@ export default function Navigation() {
                   />
                 )}
                 <item.icon
-                  size={22}
+                  size={20}
                   className={`relative z-10 transition-colors duration-200 ${active ? 'text-indigo-400' : 'text-slate-500'}`}
                 />
-                <span className={`relative z-10 text-xs transition-colors duration-200 ${active ? 'text-indigo-400 font-medium' : 'text-slate-500'}`}>
+                <span className={`relative z-10 text-[10px] leading-tight transition-colors duration-200 ${active ? 'text-indigo-400 font-medium' : 'text-slate-500'}`}>
                   {item.label}
                 </span>
               </motion.button>

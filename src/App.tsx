@@ -7,6 +7,7 @@ import Study from './pages/Study'
 import Import from './pages/Import'
 import Stats from './pages/Stats'
 import Achievements from './pages/Achievements'
+import Agent from './pages/Agent'
 
 function AppRoutes() {
   const location = useLocation()
@@ -21,6 +22,7 @@ function AppRoutes() {
           <Route path="/import" element={<Import />} />
           <Route path="/stats" element={<Stats />} />
           <Route path="/achievements" element={<Achievements />} />
+          <Route path="/agent" element={<Agent />} />
         </Routes>
       </AnimatePresence>
       {!hideNav && <Navigation />}
