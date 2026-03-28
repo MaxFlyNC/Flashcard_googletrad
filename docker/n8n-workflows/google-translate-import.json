@@ -1,0 +1,64 @@
+{
+  "name": "FlashCardTrad — Import Google Translate",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 24 }]
+        }
+      },
+      "name": "Planificateur quotidien",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.mymemory.translated.net/get",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "={{ $json.word }}" },
+            { "name": "langpair", "value": "={{ $json.sourceLang }}|{{ $json.targetLang }}" }
+          ]
+        }
+      },
+      "name": "Traduire via MyMemory",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Transforme la réponse MyMemory en flashcard\nconst items = [];\nfor (const item of $input.all()) {\n  const data = item.json.responseData;\n  if (data && data.translatedText) {\n    items.push({\n      json: {\n        front: item.json.query || 'N/A',\n        back: data.translatedText,\n        sourceLang: 'auto',\n        targetLang: 'fr',\n        createdAt: new Date().toISOString()\n      }\n    });\n  }\n}\nreturn items;"
+      },
+      "name": "Formater flashcard",
+      "type": "n8n-nodes-base.code",
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": { "mode": "id", "value": "VOTRE_GOOGLE_SHEET_ID" },
+        "sheetName": { "mode": "name", "value": "Flashcards" },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        }
+      },
+      "name": "Sauvegarder (Google Sheets)",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [900, 300],
+      "notes": "Optionnel : sauvegarde dans Google Sheets pour backup"
+    }
+  ],
+  "connections": {
+    "Planificateur quotidien": {
+      "main": [[{ "node": "Traduire via MyMemory", "type": "main", "index": 0 }]]
+    },
+    "Traduire via MyMemory": {
+      "main": [[{ "node": "Formater flashcard", "type": "main", "index": 0 }]]
+    },
+    "Formater flashcard": {
+      "main": [[{ "node": "Sauvegarder (Google Sheets)", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}

@@ -1,0 +1,106 @@
+version: '3.8'
+
+# ── FlashCardTrad — Stack complète ────────────────────────────────────────────
+#
+#  Services :
+#    flashcardtrad  → app React (build Nginx)
+#    n8n            → automatisation des workflows
+#    nginx          → reverse proxy + SSL
+#    certbot        → renouvellement automatique SSL
+#
+# Usage :
+#   cp .env.example .env && nano .env
+#   ./scripts/setup.sh      (première installation)
+#   docker compose up -d    (redémarrage)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Application FlashCardTrad ──────────────────────────────────────────────
+  flashcardtrad:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flashcardtrad
+    restart: unless-stopped
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── n8n — Automatisation ───────────────────────────────────────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    environment:
+      - N8N_HOST=${DOMAIN}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://${DOMAIN}/n8n/
+      - N8N_PATH=/n8n/
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
+      - GENERIC_TIMEZONE=${TIMEZONE}
+      - TZ=${TIMEZONE}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./docker/n8n-workflows:/home/node/.n8n/workflows:ro
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Nginx — Reverse proxy + SSL ────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx:/etc/nginx/templates        # config avec variables ${DOMAIN}
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_webroot:/var/www/certbot
+    environment:
+      - DOMAIN=${DOMAIN}
+      - NGINX_ENVSUBST_TEMPLATE_SUFFIX=.conf
+    networks:
+      - app-network
+    depends_on:
+      - flashcardtrad
+      - n8n
+
+  # ── Certbot — Let's Encrypt auto-renew ────────────────────────────────────
+  certbot:
+    image: certbot/certbot:latest
+    container_name: certbot
+    restart: unless-stopped
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :; do
+        certbot renew --webroot -w /var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done"
+
+# ── Réseaux ───────────────────────────────────────────────────────────────────
+networks:
+  app-network:
+    driver: bridge
+
+# ── Volumes persistants ───────────────────────────────────────────────────────
+volumes:
+  n8n_data:
+  certbot_certs:
+  certbot_webroot:
