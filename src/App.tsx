@@ -8,10 +8,14 @@ import Import from './pages/Import'
 import Stats from './pages/Stats'
 import Achievements from './pages/Achievements'
 import Agent from './pages/Agent'
+import { useAutoSync } from './hooks/useAutoSync'
 
 function AppRoutes() {
   const location = useLocation()
   const hideNav = location.pathname === '/study'
+
+  // Synchronisation automatique en arrière-plan (n8n → API → app)
+  useAutoSync()
 
   return (
     <>

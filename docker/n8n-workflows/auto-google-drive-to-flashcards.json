@@ -1,0 +1,208 @@
+{
+  "name": "FlashCardTrad — Export quotidien Google Drive → Claude → API",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{
+            "field": "cronExpression",
+            "expression": "0 3 * * *"
+          }]
+        }
+      },
+      "id": "node-schedule",
+      "name": "Planificateur — Tous les jours à 3h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300],
+      "notes": "Déclenche automatiquement chaque nuit à 3h00. Modifiable dans les paramètres du nœud."
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "queryString": "mimeType='application/json' and '{{ $vars.GOOGLE_DRIVE_FOLDER_ID }}' in parents",
+        "orderBy": "modifiedTime desc",
+        "limit": 1,
+        "options": {}
+      },
+      "id": "node-find-file",
+      "name": "Google Drive — Trouver le dernier Takeout",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [460, 300],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive OAuth2",
+          "id": "google-drive-cred"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "node-download",
+      "name": "Google Drive — Télécharger le fichier",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [680, 300],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive OAuth2",
+          "id": "google-drive-cred"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Parse Google Takeout JSON ────────────────────────────────────────────────\nconst fileData = $input.first().binary?.data;\nif (!fileData) throw new Error('Fichier vide ou illisible');\n\nconst text = Buffer.from(fileData, 'base64').toString('utf-8');\nlet json;\ntry { json = JSON.parse(text); }\ncatch { throw new Error('Fichier JSON invalide'); }\n\nlet entries = [];\nif (Array.isArray(json)) entries = json;\nelse entries = json.data ?? json.history ?? json.translations ?? [];\n\nif (!entries.length) {\n  for (const key of Object.keys(json)) {\n    const val = json[key];\n    if (Array.isArray(val) && val.length && typeof val[0] === 'object') {\n      entries = val; break;\n    }\n  }\n}\n\nconst cards = [];\nfor (const e of entries) {\n  const front = (e.sourceText || e['source-text'] || '').trim();\n  const back  = (e.translationText || e.translatedText || e['translated-text'] || '').trim();\n  const sourceLang = (e.sourceLanguage || e.sourceLang || e['source-language'] || 'en').toLowerCase();\n  const targetLang = (e.targetLanguage || e.targetLang || e['target-language'] || 'fr').toLowerCase();\n\n  if (!front || !back || front === back) continue;\n  if (front.length > 200 || back.length > 200) continue;\n\n  cards.push({ json: { front, back, sourceLang, targetLang } });\n}\n\nconsole.log(`[Parse] ${cards.length} mots trouvés dans le Takeout`);\nreturn cards;"
+      },
+      "id": "node-parse",
+      "name": "Parser le JSON Takeout",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://flashcardtrad-api:4000/api/flashcards",
+        "options": { "timeout": 10000 }
+      },
+      "id": "node-get-existing",
+      "name": "API — Récupérer les cartes existantes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 160],
+      "notes": "Récupère tous les mots déjà présents pour filtrer les doublons avant enrichissement."
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Contrôle des doublons ────────────────────────────────────────────────────\n// Récupère les cartes existantes depuis l'API\nconst existingCards = $('API — Récupérer les cartes existantes').first().json.cards || [];\n\n// Construit un Set des clés existantes pour lookup O(1)\nconst existingKeys = new Set(\n  existingCards.map(c => `${c.front.toLowerCase().trim()}||${c.back.toLowerCase().trim()}`)\n);\n\n// Filtre les nouveaux mots uniquement\nconst allCards = $('Parser le JSON Takeout').all();\nconst newCards = allCards.filter(item => {\n  const key = `${item.json.front.toLowerCase().trim()}||${item.json.back.toLowerCase().trim()}`;\n  return !existingKeys.has(key);\n});\n\nconsole.log(`[Doublons] Total: ${allCards.length} | Existants: ${existingKeys.size} | Nouveaux: ${newCards.length}`);\n\nif (newCards.length === 0) {\n  console.log('[Doublons] Aucun nouveau mot — workflow terminé.');\n  return [];\n}\n\nreturn newCards;"
+      },
+      "id": "node-dedup",
+      "name": "Filtrer les doublons",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300],
+      "notes": "Compare chaque mot du Takeout avec les cartes existantes. Seuls les nouveaux mots passent à l'enrichissement Claude."
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "node-batch",
+      "name": "Traiter mot par mot",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $vars.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 150,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Language learning expert.\\n\\nWord ({{ $json.sourceLang }}): \\\"{{ $json.front }}\\\"\\nTranslation ({{ $json.targetLang }}): \\\"{{ $json.back }}\\\"\\n\\nWrite ONE natural example sentence (max 80 chars) in {{ $json.sourceLang }} using this word.\\nRespond ONLY with valid JSON: {\\\"context\\\": \\\"sentence here\\\"}\"\n  }]\n}",
+        "options": { "timeout": 20000 }
+      },
+      "id": "node-claude",
+      "name": "Claude — Générer phrase d'exemple",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const word = $('Traiter mot par mot').first().json;\nconst claudeResp = $input.first().json;\n\nlet context = '';\ntry {\n  const text = claudeResp.content?.[0]?.text || '{}';\n  context = JSON.parse(text).context || text.trim();\n} catch {\n  context = claudeResp.content?.[0]?.text?.trim() || '';\n}\n\nreturn [{\n  json: {\n    front: word.front,\n    back: word.back,\n    sourceLang: word.sourceLang,\n    targetLang: word.targetLang,\n    context: context,\n    importedFrom: 'n8n_daily'\n  }\n}];"
+      },
+      "id": "node-assemble",
+      "name": "Assembler la flashcard enrichie",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://flashcardtrad-api:4000/api/flashcards",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "node-save",
+      "name": "Sauvegarder dans l'API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { continue: !$('Traiter mot par mot').context.noItemsLeft } }];"
+      },
+      "id": "node-loop",
+      "name": "Boucle suivante",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 300]
+    }
+  ],
+  "connections": {
+    "Planificateur — Tous les jours à 3h": {
+      "main": [[
+        { "node": "Google Drive — Trouver le dernier Takeout", "type": "main", "index": 0 },
+        { "node": "API — Récupérer les cartes existantes",     "type": "main", "index": 0 }
+      ]]
+    },
+    "Google Drive — Trouver le dernier Takeout": {
+      "main": [[{ "node": "Google Drive — Télécharger le fichier", "type": "main", "index": 0 }]]
+    },
+    "Google Drive — Télécharger le fichier": {
+      "main": [[{ "node": "Parser le JSON Takeout", "type": "main", "index": 0 }]]
+    },
+    "Parser le JSON Takeout": {
+      "main": [[{ "node": "Filtrer les doublons", "type": "main", "index": 0 }]]
+    },
+    "API — Récupérer les cartes existantes": {
+      "main": [[{ "node": "Filtrer les doublons", "type": "main", "index": 0 }]]
+    },
+    "Filtrer les doublons": {
+      "main": [[{ "node": "Traiter mot par mot", "type": "main", "index": 0 }]]
+    },
+    "Traiter mot par mot": {
+      "main": [[{ "node": "Claude — Générer phrase d'exemple", "type": "main", "index": 0 }]]
+    },
+    "Claude — Générer phrase d'exemple": {
+      "main": [[{ "node": "Assembler la flashcard enrichie", "type": "main", "index": 0 }]]
+    },
+    "Assembler la flashcard enrichie": {
+      "main": [[{ "node": "Sauvegarder dans l'API", "type": "main", "index": 0 }]]
+    },
+    "Sauvegarder dans l'API": {
+      "main": [[{ "node": "Boucle suivante", "type": "main", "index": 0 }]]
+    },
+    "Boucle suivante": {
+      "main": [[{ "node": "Traiter mot par mot", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  }
+}
