@@ -9,11 +9,29 @@
 import { db } from './db'
 import { getInitialCardState } from './srs'
 
-// En dev : API locale sur 4000, en prod : proxy Nginx via /api
 const API_BASE =
-  (typeof window !== 'undefined' && window.location.hostname === 'localhost')
+  typeof window !== 'undefined' && window.location.hostname === 'localhost'
     ? 'http://localhost:4000/api'
     : '/api'
+
+const API_TOKEN_KEY = 'api_server_token'
+
+/** Retourne les headers communs (avec Bearer token si configuré). */
+function apiHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = localStorage.getItem(API_TOKEN_KEY)
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return headers
+}
+
+export function getServerToken(): string {
+  return localStorage.getItem(API_TOKEN_KEY) ?? ''
+}
+
+export function saveServerToken(token: string): void {
+  if (token.trim()) localStorage.setItem(API_TOKEN_KEY, token.trim())
+  else localStorage.removeItem(API_TOKEN_KEY)
+}
 
 export interface ServerCard {
   id: number
@@ -32,7 +50,8 @@ export interface ServerCard {
  * et les importe dans IndexedDB en évitant les doublons.
  */
 export async function syncFromServer(): Promise<{ imported: number; skipped: number }> {
-  const response = await fetch(`${API_BASE}/flashcards`)
+  const response = await fetch(`${API_BASE}/flashcards`, { headers: apiHeaders() })
+  if (response.status === 304) return { imported: 0, skipped: 0 }
   if (!response.ok) throw new Error(`Erreur API: ${response.status}`)
 
   const data = await response.json() as { cards: ServerCard[]; total: number }
@@ -42,7 +61,7 @@ export async function syncFromServer(): Promise<{ imported: number; skipped: num
   const existingSet = new Set(existing.map(c => `${c.front}||${c.back}`))
 
   let imported = 0
-  let skipped = 0
+  let skipped  = 0
 
   for (const sc of serverCards) {
     const key = `${sc.front}||${sc.back}`
@@ -67,7 +86,7 @@ export async function syncFromServer(): Promise<{ imported: number; skipped: num
 }
 
 /**
- * Vérifie que l'API est joignable.
+ * Vérifie que l'API est joignable (sans auth — /health est public).
  */
 export async function checkApiHealth(): Promise<boolean> {
   try {

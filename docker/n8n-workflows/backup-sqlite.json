@@ -1,0 +1,152 @@
+{
+  "name": "FlashCardTrad — Backup SQLite quotidien → Google Drive",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{
+            "field": "cronExpression",
+            "expression": "0 4 * * *"
+          }]
+        }
+      },
+      "id": "node-schedule",
+      "name": "Planificateur — Tous les jours à 4h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300],
+      "notes": "S'exécute à 4h00, 1 heure après le workflow d'enrichissement (3h00)."
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://flashcardtrad-api:4000/api/export",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $vars.API_TOKEN }}" }
+          ]
+        },
+        "options": {
+          "response": { "response": { "responseFormat": "file" } },
+          "timeout": 30000
+        }
+      },
+      "id": "node-download-db",
+      "name": "Télécharger la base SQLite",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300],
+      "notes": "Appelle GET /api/export pour récupérer le fichier flashcards.db en téléchargement binaire."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Renommer le fichier avec la date du jour\nconst today = new Date().toISOString().slice(0, 10);\nconst item = $input.first();\n\nif (item.binary?.data) {\n  item.binary.data.fileName = `flashcards-backup-${today}.db`;\n  item.binary.data.mimeType = 'application/octet-stream';\n}\n\nreturn [item];"
+      },
+      "id": "node-rename",
+      "name": "Nommer le fichier backup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "name": "={{ $binary.data.fileName }}",
+        "driveId": { "__rl": true, "value": "MyDrive", "mode": "list" },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $vars.GOOGLE_DRIVE_BACKUP_FOLDER_ID }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "node-upload",
+      "name": "Uploader sur Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [900, 300],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive OAuth2",
+          "id": "google-drive-cred"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "search",
+        "queryString": "='{{ $vars.GOOGLE_DRIVE_BACKUP_FOLDER_ID }}' in parents and name contains 'flashcards-backup' and mimeType='application/octet-stream'",
+        "orderBy": "createdTime asc",
+        "options": {}
+      },
+      "id": "node-list-old",
+      "name": "Lister les anciens backups",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1120, 300],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive OAuth2",
+          "id": "google-drive-cred"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Garder seulement les 30 derniers backups — supprimer les plus anciens\nconst files = $input.all().map(i => i.json);\nconst MAX_BACKUPS = 30;\n\nif (files.length <= MAX_BACKUPS) {\n  console.log(`[Backup] ${files.length} fichiers — rien à supprimer`);\n  return [];\n}\n\nconst toDelete = files.slice(0, files.length - MAX_BACKUPS);\nconsole.log(`[Backup] Suppression de ${toDelete.length} anciens backups`);\n\nreturn toDelete.map(f => ({ json: { fileId: f.id, name: f.name } }));"
+      },
+      "id": "node-filter-old",
+      "name": "Identifier les backups à supprimer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "deleteFile",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.fileId }}",
+          "mode": "id"
+        }
+      },
+      "id": "node-delete-old",
+      "name": "Supprimer les anciens backups",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1560, 300],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive OAuth2",
+          "id": "google-drive-cred"
+        }
+      },
+      "notes": "Supprime les fichiers de plus de 30 jours pour ne pas saturer Google Drive."
+    }
+  ],
+  "connections": {
+    "Planificateur — Tous les jours à 4h": {
+      "main": [[{ "node": "Télécharger la base SQLite", "type": "main", "index": 0 }]]
+    },
+    "Télécharger la base SQLite": {
+      "main": [[{ "node": "Nommer le fichier backup", "type": "main", "index": 0 }]]
+    },
+    "Nommer le fichier backup": {
+      "main": [[{ "node": "Uploader sur Google Drive", "type": "main", "index": 0 }]]
+    },
+    "Uploader sur Google Drive": {
+      "main": [[{ "node": "Lister les anciens backups", "type": "main", "index": 0 }]]
+    },
+    "Lister les anciens backups": {
+      "main": [[{ "node": "Identifier les backups à supprimer", "type": "main", "index": 0 }]]
+    },
+    "Identifier les backups à supprimer": {
+      "main": [[{ "node": "Supprimer les anciens backups", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  }
+}

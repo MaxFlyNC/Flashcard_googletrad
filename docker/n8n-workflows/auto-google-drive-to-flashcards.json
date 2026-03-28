@@ -73,6 +73,12 @@
       "parameters": {
         "method": "GET",
         "url": "=http://flashcardtrad-api:4000/api/flashcards",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $vars.API_TOKEN }}" }
+          ]
+        },
         "options": { "timeout": 10000 }
       },
       "id": "node-get-existing",
@@ -119,13 +125,15 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 150,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Language learning expert.\\n\\nWord ({{ $json.sourceLang }}): \\\"{{ $json.front }}\\\"\\nTranslation ({{ $json.targetLang }}): \\\"{{ $json.back }}\\\"\\n\\nWrite ONE natural example sentence (max 80 chars) in {{ $json.sourceLang }} using this word.\\nRespond ONLY with valid JSON: {\\\"context\\\": \\\"sentence here\\\"}\"\n  }]\n}",
-        "options": { "timeout": 20000 }
+        "options": { "timeout": 20000 },
+        "onError": "continueRegularOutput"
       },
       "id": "node-claude",
       "name": "Claude — Générer phrase d'exemple",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1780, 300]
+      "position": [1780, 300],
+      "notes": "Si Claude échoue (quota, timeout), continueRegularOutput permet de sauvegarder la carte sans context plutôt que d'interrompre tout le workflow."
     },
     {
       "parameters": {
@@ -141,6 +149,13 @@
       "parameters": {
         "method": "POST",
         "url": "=http://flashcardtrad-api:4000/api/flashcards",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $vars.API_TOKEN }}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ JSON.stringify($json) }}",

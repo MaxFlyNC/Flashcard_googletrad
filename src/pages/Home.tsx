@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { Zap, Flame, Target, BookOpen, ChevronRight, Star, TrendingUp, Clock } from 'lucide-react'
+import { Zap, Flame, Target, BookOpen, ChevronRight, Star, Clock, Sparkles } from 'lucide-react'
 import { db, getOrCreateProgress, getDueCards, updateProgress } from '../lib/db'
 import { UserProgress, Flashcard } from '../lib/types'
 import { levelFromXP, xpProgress, xpForLevel } from '../lib/srs'
-import { isToday, isTomorrow, formatDistanceToNow } from 'date-fns'
+import { isToday, isTomorrow, startOfDay } from 'date-fns'
 import { fr } from 'date-fns/locale'
 
 const LEVEL_NAMES: Record<number, string> = {
@@ -23,6 +23,7 @@ export default function Home() {
   const [totalCards, setTotalCards] = useState(0)
   const [todayReviewed, setTodayReviewed] = useState(0)
   const [recentCards, setRecentCards] = useState<Flashcard[]>([])
+  const [enrichedCount, setEnrichedCount] = useState(0)
 
   useEffect(() => {
     loadData()
@@ -57,10 +58,14 @@ export default function Home() {
     const total = await db.flashcards.count()
     setTotalCards(total)
 
-    // Today's sessions
-    const sessions = await db.sessions.toArray()
-    const todaySessions = sessions.filter(s => isToday(new Date(s.date)))
+    // Today's sessions — filtered by date index, not full toArray()
+    const todayStart = startOfDay(new Date())
+    const todaySessions = await db.sessions.where('date').above(todayStart).toArray()
     setTodayReviewed(todaySessions.reduce((sum, s) => sum + s.cardsReviewed, 0))
+
+    // Cards enriched by AI (have a context)
+    const enriched = await db.flashcards.filter(c => Boolean(c.context)).count()
+    setEnrichedCount(enriched)
 
     // Recent cards
     const recent = await db.flashcards.orderBy('createdAt').reverse().limit(5).toArray()
@@ -164,10 +169,11 @@ export default function Home() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="grid grid-cols-3 gap-3"
+          className="grid grid-cols-2 gap-3"
         >
-          <StatCard icon={<Flame size={20} className="text-orange-400" />} value={progress.streak} label="Jours" color="orange" />
+          <StatCard icon={<Flame size={20} className="text-orange-400" />} value={progress.streak} label="Jours streak" color="orange" />
           <StatCard icon={<Target size={20} className="text-indigo-400" />} value={totalCards} label="Cartes" color="indigo" />
+          <StatCard icon={<Sparkles size={20} className="text-violet-400" />} value={enrichedCount} label="Enrichies IA" color="violet" />
           <StatCard icon={<Star size={20} className="text-amber-400" />} value={progress.achievements.length} label="Badges" color="amber" />
         </motion.div>
 
@@ -283,7 +289,8 @@ function StatCard({ icon, value, label, color }: { icon: React.ReactNode; value:
   const colorMap: Record<string, string> = {
     orange: 'bg-orange-500/10 border-orange-500/20',
     indigo: 'bg-indigo-500/10 border-indigo-500/20',
-    amber: 'bg-amber-500/10 border-amber-500/20',
+    amber:  'bg-amber-500/10 border-amber-500/20',
+    violet: 'bg-violet-500/10 border-violet-500/20',
   }
   return (
     <div className={`rounded-2xl p-3 border ${colorMap[color]}`}>

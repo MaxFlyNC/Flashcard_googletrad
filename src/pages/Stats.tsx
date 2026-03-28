@@ -28,12 +28,15 @@ export default function Stats() {
     const prog = await getOrCreateProgress()
     setProgress(prog)
 
-    const allSessions = await db.sessions.orderBy('date').reverse().toArray()
+    // Limit to last 100 sessions — sufficient for all displayed stats
+    const allSessions = await db.sessions.orderBy('date').reverse().limit(100).toArray()
     setSessions(allSessions)
 
-    const allCards = await db.flashcards.toArray()
-    setTotalCards(allCards.length)
-    setMatureCards(allCards.filter(c => c.interval >= 21).length)
+    // Use count() queries instead of loading all cards into memory
+    const total  = await db.flashcards.count()
+    const mature = await db.flashcards.filter(c => c.interval >= 21).count()
+    setTotalCards(total)
+    setMatureCards(mature)
 
     // Last 7 days
     const days: DayStats[] = []

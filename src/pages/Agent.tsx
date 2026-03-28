@@ -11,6 +11,7 @@ import { Flashcard } from '../lib/types'
 import { getApiKey, saveApiKey, hasApiKey, enrichCard } from '../lib/aiAgent'
 import { generateAnkiTSV, downloadFile, filterCards } from '../lib/ankiExport'
 import { LANGUAGE_NAMES } from '../lib/googleTranslateParser'
+import { getServerToken, saveServerToken } from '../lib/serverSync'
 
 // ─── Page principale ──────────────────────────────────────────────────────────
 
@@ -31,9 +32,14 @@ export default function Agent() {
           </p>
         </motion.div>
 
-        {/* 1 — Clé API */}
+        {/* 1 — Clé API Claude */}
         <Section icon={<Key size={18} />} title="Clé API Claude" delay={0.05}>
           <ApiKeySection />
+        </Section>
+
+        {/* 2 — Token serveur */}
+        <Section icon={<Key size={18} />} title="Token API serveur" delay={0.08}>
+          <ServerTokenSection />
         </Section>
 
         {/* 2 — Enrichissement IA */}
@@ -151,6 +157,55 @@ function ApiKeySection() {
             <CheckCircle2 size={16} />
             <span>Active</span>
           </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Section Token serveur ────────────────────────────────────────────────────
+
+function ServerTokenSection() {
+  const [token, setToken] = useState(getServerToken)
+  const [show, setShow]   = useState(false)
+  const [saved, setSaved] = useState(() => Boolean(getServerToken()))
+
+  const handleSave = () => {
+    saveServerToken(token)
+    setSaved(Boolean(token.trim()))
+    toast.success(token.trim() ? 'Token serveur sauvegardé' : 'Token supprimé')
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-slate-900/30 border border-slate-700/30 rounded-xl p-3 text-xs text-slate-400">
+        Token Bearer pour sécuriser l'API backend (valeur de <span className="font-mono bg-slate-800 px-1 rounded">API_TOKEN</span> dans votre <span className="font-mono bg-slate-800 px-1 rounded">.env</span> sur le serveur).
+        Laissez vide en développement local.
+      </div>
+      <div className="flex gap-2">
+        <input
+          type={show ? 'text' : 'password'}
+          value={token}
+          onChange={e => setToken(e.target.value)}
+          placeholder="Laissez vide en dev local…"
+          className="flex-1 bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-white text-sm font-mono placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+        />
+        <button onClick={() => setShow(s => !s)} className="px-3 text-slate-400 hover:text-slate-200">
+          {show ? <EyeOff size={16} /> : <Eye size={16} />}
+        </button>
+      </div>
+      <div className="flex items-center gap-3">
+        <motion.button
+          whileTap={{ scale: 0.97 }}
+          onClick={handleSave}
+          className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-xl transition-colors"
+        >
+          Sauvegarder
+        </motion.button>
+        {saved && (
+          <span className="flex items-center gap-1.5 text-emerald-400 text-sm">
+            <CheckCircle2 size={16} /> Configuré
+          </span>
         )}
       </div>
     </div>

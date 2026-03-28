@@ -52,5 +52,18 @@ export default defineConfig({
         ]
       }
     })
-  ]
+  ],
+  build: {
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react':  ['react', 'react-dom', 'react-router-dom'],
+          'vendor-ui':     ['framer-motion', 'lucide-react', 'react-hot-toast'],
+          'vendor-db':     ['dexie', 'dexie-react-hooks'],
+          'vendor-misc':   ['date-fns', 'react-confetti'],
+        },
+      },
+    },
+  },
 })
