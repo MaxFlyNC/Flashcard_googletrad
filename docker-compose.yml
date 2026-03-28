@@ -3,10 +3,14 @@ version: '3.8'
 # ── FlashCardTrad — Stack complète ────────────────────────────────────────────
 #
 #  Services :
-#    flashcardtrad  → app React (build Nginx)
-#    n8n            → automatisation des workflows
-#    nginx          → reverse proxy + SSL
-#    certbot        → renouvellement automatique SSL
+#    flashcardtrad      → app React (build Nginx)
+#    flashcardtrad-api  → API Express + SQLite (reçoit les cartes de n8n)
+#    n8n                → enrichissement Claude + import automatique
+#    nginx              → reverse proxy + SSL
+#    certbot            → renouvellement automatique SSL
+#
+# Flux :
+#   Google Takeout JSON → Webhook n8n → Claude API → API Express → App React
 #
 # Usage :
 #   cp .env.example .env && nano .env
@@ -16,7 +20,27 @@ version: '3.8'
 
 services:
 
-  # ── Application FlashCardTrad ──────────────────────────────────────────────
+  # ── API Backend (reçoit les cartes enrichies de n8n) ──────────────────────
+  flashcardtrad-api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: flashcardtrad-api
+    restart: unless-stopped
+    environment:
+      - PORT=4000
+      - DB_PATH=/data/flashcards.db
+    volumes:
+      - api_data:/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Application FlashCardTrad (React PWA) ──────────────────────────────────
   flashcardtrad:
     build:
       context: .
@@ -77,6 +101,7 @@ services:
       - app-network
     depends_on:
       - flashcardtrad
+      - flashcardtrad-api
       - n8n
 
   # ── Certbot — Let's Encrypt auto-renew ────────────────────────────────────
@@ -102,5 +127,6 @@ networks:
 # ── Volumes persistants ───────────────────────────────────────────────────────
 volumes:
   n8n_data:
+  api_data:
   certbot_certs:
   certbot_webroot:

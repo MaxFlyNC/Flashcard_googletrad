@@ -1,0 +1,151 @@
+{
+  "name": "FlashCardTrad — Google Translate → Claude → API",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "import-google-translate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook",
+      "name": "Webhook — Réception Google Takeout",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "flashcardtrad-import"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Parse le JSON Google Takeout ────────────────────────────────────────────\n// Le webhook reçoit : { \"data\": [...] } ou un tableau direct\n\nconst body = $input.first().json.body || $input.first().json;\nlet entries = [];\n\nif (Array.isArray(body)) {\n  entries = body;\n} else if (body.data)    entries = body.data;\nelse if (body.history)  entries = body.history;\nelse if (body.translations) entries = body.translations;\n\nconst cards = [];\nfor (const e of entries) {\n  const front = (e.sourceText || e['source-text'] || '').trim();\n  const back  = (e.translationText || e.translatedText || e['translated-text'] || '').trim();\n  const sourceLang = (e.sourceLanguage || e.sourceLang || e['source-language'] || 'en').toLowerCase();\n  const targetLang = (e.targetLanguage || e.targetLang || e['target-language'] || 'fr').toLowerCase();\n\n  if (!front || !back || front === back) continue;\n  if (front.length > 200 || back.length > 200) continue;\n\n  cards.push({ json: { front, back, sourceLang, targetLang } });\n}\n\nconsole.log(`Parsed ${cards.length} cards from Google Takeout`);\nreturn cards;"
+      },
+      "id": "node-parse",
+      "name": "Parser Google Takeout JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "node-batch",
+      "name": "Traiter mot par mot",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 200,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"You are a language learning expert.\\n\\nWord in {{ $json.sourceLang }}: \\\"{{ $json.front }}\\\"\\nTranslation in {{ $json.targetLang }}: \\\"{{ $json.back }}\\\"\\n\\nWrite ONE natural example sentence (max 80 chars) in {{ $json.sourceLang }} using this word.\\nRespond ONLY with JSON: {\\\"context\\\": \\\"your sentence here\\\"}\"\n  }]\n}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-claude",
+      "name": "Claude — Génère phrase d'exemple",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "name": "Anthropic API Key",
+          "id": "anthropic-cred"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Assembler la flashcard enrichie ─────────────────────────────────────────\nconst batchItem = $('Traiter mot par mot').first().json;\nconst claudeResponse = $input.first().json;\n\nlet context = '';\ntry {\n  const text = claudeResponse.content?.[0]?.text || '{}';\n  const parsed = JSON.parse(text);\n  context = parsed.context || text;\n} catch {\n  context = claudeResponse.content?.[0]?.text || '';\n}\n\nreturn [{\n  json: {\n    front:        batchItem.front,\n    back:         batchItem.back,\n    sourceLang:   batchItem.sourceLang,\n    targetLang:   batchItem.targetLang,\n    context:      context,\n    importedFrom: 'n8n_enriched'\n  }\n}];"
+      },
+      "id": "node-assemble",
+      "name": "Assembler la flashcard enrichie",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://flashcardtrad-api:4000/api/flashcards",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "node-save",
+      "name": "Sauvegarder dans FlashCardTrad API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vérifier s'il reste des items à traiter\nconst batchNode = $('Traiter mot par mot');\nconst isDone = batchNode.context.noItemsLeft;\nreturn [{ json: { done: isDone } }];"
+      },
+      "id": "node-check",
+      "name": "Vérifier fin de batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, message: 'Import enrichi terminé. Vérifiez votre app FlashCardTrad.' }) }}"
+      },
+      "id": "node-respond",
+      "name": "Répondre au webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    }
+  ],
+  "connections": {
+    "Webhook — Réception Google Takeout": {
+      "main": [[{ "node": "Parser Google Takeout JSON", "type": "main", "index": 0 }]]
+    },
+    "Parser Google Takeout JSON": {
+      "main": [[{ "node": "Traiter mot par mot", "type": "main", "index": 0 }]]
+    },
+    "Traiter mot par mot": {
+      "main": [[{ "node": "Claude — Génère phrase d'exemple", "type": "main", "index": 0 }]]
+    },
+    "Claude — Génère phrase d'exemple": {
+      "main": [[{ "node": "Assembler la flashcard enrichie", "type": "main", "index": 0 }]]
+    },
+    "Assembler la flashcard enrichie": {
+      "main": [[{ "node": "Sauvegarder dans FlashCardTrad API", "type": "main", "index": 0 }]]
+    },
+    "Sauvegarder dans FlashCardTrad API": {
+      "main": [[{ "node": "Vérifier fin de batch", "type": "main", "index": 0 }]]
+    },
+    "Vérifier fin de batch": {
+      "main": [[{ "node": "Traiter mot par mot", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

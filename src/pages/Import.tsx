@@ -1,14 +1,15 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Upload, FileJson, Plus, Trash2, CheckCircle2, BookOpen, Info, ScanLine, Loader2, Languages } from 'lucide-react'
+import { Upload, FileJson, Plus, Trash2, CheckCircle2, BookOpen, Info, ScanLine, Loader2, Languages, RefreshCw, ServerIcon } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { parseGoogleTakeout, parsePlainText, langName, LANGUAGE_NAMES } from '../lib/googleTranslateParser'
 import { importCards, db } from '../lib/db'
 import { Flashcard } from '../lib/types'
 import { getInitialCardState } from '../lib/srs'
 import { translateText } from '../lib/translate'
+import { syncFromServer, checkApiHealth } from '../lib/serverSync'
 
-type Tab = 'takeout' | 'text' | 'manual' | 'scan'
+type Tab = 'takeout' | 'text' | 'manual' | 'scan' | 'server'
 
 export default function Import() {
   const [tab, setTab] = useState<Tab>('takeout')
@@ -110,6 +111,7 @@ export default function Import() {
     { id: 'text', label: 'Texte / CSV', icon: <BookOpen size={16} /> },
     { id: 'manual', label: 'Manuel', icon: <Plus size={16} /> },
     { id: 'scan', label: 'Scanner', icon: <ScanLine size={16} /> },
+    { id: 'server', label: 'Sync n8n', icon: <ServerIcon size={16} /> },
   ]
 
   const langOptions = Object.entries(LANGUAGE_NAMES).filter(([k]) => k !== 'auto')
@@ -234,6 +236,13 @@ export default function Import() {
             </motion.div>
           )}
 
+          {/* ── Sync serveur n8n ────────────────────────────────────── */}
+          {tab === 'server' && (
+            <motion.div key="server" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}>
+              <ServerSyncTab />
+            </motion.div>
+          )}
+
           {/* ── Scanner (Scanmarker Air) ─────────────────────────────── */}
           {tab === 'scan' && (
             <motion.div key="scan" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}>
@@ -317,6 +326,133 @@ export default function Import() {
         {/* Manage section */}
         <ManageCards />
       </div>
+    </div>
+  )
+}
+
+// ─── Server Sync Tab (n8n) ───────────────────────────────────────────────────
+
+function ServerSyncTab() {
+  const [apiOnline, setApiOnline] = useState<boolean | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [result, setResult] = useState<{ imported: number; skipped: number } | null>(null)
+
+  // Vérifier la connexion au démarrage
+  useEffect(() => {
+    checkApiHealth().then(setApiOnline)
+  }, [])
+
+  const handleSync = async () => {
+    setSyncing(true)
+    setResult(null)
+    try {
+      const r = await syncFromServer()
+      setResult(r)
+      toast.success(`${r.imported} cartes synchronisées depuis n8n !`)
+    } catch {
+      toast.error('Impossible de joindre l\'API. Vérifiez votre connexion au serveur.')
+      setApiOnline(false)
+    }
+    setSyncing(false)
+  }
+
+  const recheckHealth = async () => {
+    setApiOnline(null)
+    const ok = await checkApiHealth()
+    setApiOnline(ok)
+  }
+
+  return (
+    <div className="space-y-4">
+
+      {/* Explication du flux */}
+      <div className="bg-cyan-900/20 border border-cyan-500/20 rounded-xl p-4 flex gap-3">
+        <ServerIcon size={18} className="text-cyan-400 flex-shrink-0 mt-0.5" />
+        <div className="text-sm text-cyan-200 space-y-1">
+          <p className="font-medium">Synchronisation depuis n8n</p>
+          <p className="text-cyan-300 text-xs">
+            Récupère les flashcards enrichies par Claude via le workflow n8n
+            et les importe dans votre app.
+          </p>
+        </div>
+      </div>
+
+      {/* Statut API */}
+      <div className="flex items-center justify-between bg-slate-900/40 rounded-xl px-4 py-3">
+        <span className="text-slate-400 text-sm">Statut de l'API</span>
+        <div className="flex items-center gap-2">
+          {apiOnline === null && <Loader2 size={14} className="animate-spin text-slate-400" />}
+          {apiOnline === true && (
+            <span className="flex items-center gap-1.5 text-emerald-400 text-sm">
+              <CheckCircle2 size={14} /> En ligne
+            </span>
+          )}
+          {apiOnline === false && (
+            <span className="flex items-center gap-1.5 text-red-400 text-sm">
+              <span className="w-2 h-2 bg-red-400 rounded-full" /> Hors ligne
+            </span>
+          )}
+          <button onClick={recheckHealth} className="text-slate-500 hover:text-slate-300 ml-1">
+            <RefreshCw size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Flux visuel */}
+      <div className="bg-slate-900/30 rounded-xl p-4 text-xs text-slate-400 space-y-1.5 font-mono">
+        <p className="text-slate-300 font-sans font-medium text-sm mb-2">Flux d'enrichissement</p>
+        <p>📄 Google Takeout JSON</p>
+        <p className="pl-3 text-slate-500">↓ upload via webhook n8n</p>
+        <p>⚙️  n8n parse les mots</p>
+        <p className="pl-3 text-slate-500">↓ appel Claude API (Haiku)</p>
+        <p>✨ Claude génère les exemples</p>
+        <p className="pl-3 text-slate-500">↓ POST /api/flashcards/bulk</p>
+        <p>🗄️  API stocke dans SQLite</p>
+        <p className="pl-3 text-slate-500">↓ bouton Synchroniser ci-dessous</p>
+        <p>📱 Vos flashcards enrichies</p>
+      </div>
+
+      {/* Bouton sync */}
+      <motion.button
+        whileTap={{ scale: 0.97 }}
+        onClick={handleSync}
+        disabled={syncing || apiOnline === false}
+        className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 text-sm"
+      >
+        {syncing ? (
+          <><Loader2 size={16} className="animate-spin" /> Synchronisation…</>
+        ) : (
+          <><RefreshCw size={16} /> Synchroniser depuis n8n</>
+        )}
+      </motion.button>
+
+      {/* Résultat */}
+      <AnimatePresence>
+        {result && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="bg-emerald-900/30 border border-emerald-500/30 rounded-xl p-4 flex items-center gap-3"
+          >
+            <CheckCircle2 size={20} className="text-emerald-400" />
+            <div>
+              <p className="text-white font-semibold text-sm">Synchronisation réussie</p>
+              <p className="text-emerald-300 text-xs">
+                {result.imported} nouvelles cartes
+                {result.skipped > 0 && ` · ${result.skipped} doublons ignorés`}
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Lien vers le workflow n8n */}
+      <p className="text-xs text-slate-500 text-center">
+        Configurez le workflow sur{' '}
+        <span className="font-mono bg-slate-800 px-1 rounded">votredomaine.com/n8n/</span>
+      </p>
+
     </div>
   )
 }
