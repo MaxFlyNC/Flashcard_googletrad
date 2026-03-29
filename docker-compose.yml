@@ -92,7 +92,10 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./docker/nginx:/etc/nginx/templates        # config avec variables ${DOMAIN}
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro          # config principale
+      - ./docker/nginx/templates:/etc/nginx/templates               # templates envsubst (FlashCardTrad)
+      - ./docker/nginx/snippets:/etc/nginx/snippets:ro              # SSL + proxy partagés
+      - ./docker/nginx/conf.d:/etc/nginx/projects.d:ro              # projets supplémentaires
       - certbot_certs:/etc/letsencrypt:ro
       - certbot_webroot:/var/www/certbot
     environment:
